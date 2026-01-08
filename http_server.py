@@ -17,8 +17,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
-# Boswell API configuration
-BOSWELL_API = "https://stevekrontz.com/boswell/v2"
+# Boswell API configuration - Railway deployment
+BOSWELL_API = "https://delightful-imagination-production-f6a1.up.railway.app/v2"
 
 # Store for SSE sessions - maps session_id to response queue
 sessions: Dict[str, asyncio.Queue] = {}
