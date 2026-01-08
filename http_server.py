@@ -311,8 +311,11 @@ async def handle_sse(request: Request):
     queue = asyncio.Queue()
     sessions[session_id] = queue
 
-    # Get base URL from request
+    # Get base URL from request, ensuring HTTPS
     base_url = str(request.base_url).rstrip('/')
+    # Railway/proxies use X-Forwarded-Proto, force HTTPS
+    if base_url.startswith("http://"):
+        base_url = "https://" + base_url[7:]
     message_endpoint = f"{base_url}/messages/{session_id}"
 
     async def event_generator():
