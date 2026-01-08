@@ -2,13 +2,14 @@
 """
 Boswell MCP HTTP Server - Remote MCP server for Claude.ai Custom Connectors.
 
-This wraps the MCP server with HTTP transport using Server-Sent Events (SSE)
-as required by the MCP protocol for remote connections.
+Implements MCP protocol with SSE transport for remote connections.
 """
 
 import json
 import asyncio
-from typing import Any
+import uuid
+import os
+from typing import Any, Dict
 import httpx
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -18,6 +19,9 @@ from sse_starlette.sse import EventSourceResponse
 
 # Boswell API configuration
 BOSWELL_API = "https://stevekrontz.com/boswell/v2"
+
+# Store for SSE sessions - maps session_id to response queue
+sessions: Dict[str, asyncio.Queue] = {}
 
 # Tool definitions
 TOOLS = [
@@ -241,43 +245,12 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
             return {"error": str(e)}
 
 
-# ==================== MCP HTTP ENDPOINTS ====================
-
-async def handle_mcp_sse(request: Request):
-    """Handle MCP requests via Server-Sent Events."""
-
-    async def event_generator():
-        # Send server info
-        yield {
-            "event": "message",
-            "data": json.dumps({
-                "jsonrpc": "2.0",
-                "method": "server/info",
-                "params": {
-                    "name": "boswell-mcp",
-                    "version": "1.0.0",
-                    "capabilities": {
-                        "tools": {}
-                    }
-                }
-            })
-        }
-
-    return EventSourceResponse(event_generator())
-
-
-async def handle_mcp_post(request: Request):
-    """Handle MCP JSON-RPC requests."""
-    try:
-        body = await request.json()
-    except:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-
+async def process_mcp_request(body: dict) -> dict:
+    """Process an MCP JSON-RPC request and return response."""
     method = body.get("method", "")
     params = body.get("params", {})
     request_id = body.get("id")
 
-    # Handle different MCP methods
     if method == "initialize":
         result = {
             "protocolVersion": "2024-11-05",
@@ -289,6 +262,10 @@ async def handle_mcp_post(request: Request):
                 "tools": {}
             }
         }
+
+    elif method == "notifications/initialized":
+        # Client confirms initialization - no response needed
+        return None
 
     elif method == "tools/list":
         result = {"tools": TOOLS}
@@ -310,17 +287,105 @@ async def handle_mcp_post(request: Request):
         result = {}
 
     else:
-        return JSONResponse({
+        return {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {"code": -32601, "message": f"Unknown method: {method}"}
-        })
+        }
 
-    return JSONResponse({
+    return {
         "jsonrpc": "2.0",
         "id": request_id,
         "result": result
-    })
+    }
+
+
+# ==================== MCP SSE TRANSPORT ====================
+
+async def handle_sse(request: Request):
+    """
+    SSE endpoint for MCP transport.
+    Sends an 'endpoint' event with the message URL, then streams responses.
+    """
+    session_id = str(uuid.uuid4())
+    queue = asyncio.Queue()
+    sessions[session_id] = queue
+
+    # Get base URL from request
+    base_url = str(request.base_url).rstrip('/')
+    message_endpoint = f"{base_url}/messages/{session_id}"
+
+    async def event_generator():
+        try:
+            # First, send the endpoint event telling client where to POST
+            yield {
+                "event": "endpoint",
+                "data": message_endpoint
+            }
+
+            # Keep connection alive and stream responses
+            while True:
+                try:
+                    # Wait for messages with timeout for keepalive
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield {
+                        "event": "message",
+                        "data": json.dumps(message)
+                    }
+                except asyncio.TimeoutError:
+                    # Send keepalive ping
+                    yield {"event": "ping", "data": ""}
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Cleanup session
+            sessions.pop(session_id, None)
+
+    return EventSourceResponse(event_generator())
+
+
+async def handle_messages(request: Request):
+    """
+    Handle POST requests from the MCP client.
+    Processes the request and queues the response for SSE delivery.
+    """
+    # Extract session_id from path
+    session_id = request.path_params.get("session_id")
+
+    if session_id not in sessions:
+        return JSONResponse(
+            {"error": "Session not found. Connect to /sse first."},
+            status_code=404
+        )
+
+    try:
+        body = await request.json()
+    except:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    # Process the request
+    response = await process_mcp_request(body)
+
+    # Queue the response for SSE delivery
+    if response is not None:
+        await sessions[session_id].put(response)
+
+    # Return accepted
+    return Response(status_code=202)
+
+
+async def handle_mcp_post(request: Request):
+    """Handle direct MCP JSON-RPC requests (non-SSE fallback)."""
+    try:
+        body = await request.json()
+    except:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    response = await process_mcp_request(body)
+    if response is None:
+        return Response(status_code=204)
+    return JSONResponse(response)
 
 
 async def health_check(request: Request):
@@ -329,7 +394,8 @@ async def health_check(request: Request):
         "status": "ok",
         "server": "boswell-mcp",
         "version": "1.0.0",
-        "tools": len(TOOLS)
+        "tools": len(TOOLS),
+        "active_sessions": len(sessions)
     })
 
 
@@ -341,11 +407,13 @@ app = Starlette(
         Route("/", health_check, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
         Route("/mcp", handle_mcp_post, methods=["POST"]),
-        Route("/sse", handle_mcp_sse, methods=["GET"]),
+        Route("/sse", handle_sse, methods=["GET"]),
+        Route("/messages/{session_id}", handle_messages, methods=["POST"]),
     ]
 )
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
