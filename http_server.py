@@ -153,6 +153,14 @@ TOOLS = [
             "required": ["branch"]
         }
     },
+    {
+        "name": "boswell_startup",
+        "description": "Load startup context in ONE call. Returns sacred_manifest (active commitments) + tool_registry (available tools). Call this FIRST at the start of every conversation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
 ]
 
 
@@ -232,6 +240,54 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
 
             elif name == "boswell_checkout":
                 resp = await client.post(f"{BOSWELL_API}/checkout", json={"branch": arguments["branch"]})
+
+            elif name == "boswell_startup":
+                # Fetch sacred_manifest and tool_registry in parallel
+                startup_data = {"sacred_manifest": None, "tool_registry": None, "errors": []}
+
+                # Search for sacred_manifest
+                manifest_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "sacred_manifest", "limit": 1})
+                if manifest_resp.status_code == 200:
+                    manifest_results = manifest_resp.json()
+                    if manifest_results.get("results"):
+                        blob_hash = manifest_results["results"][0].get("blob_hash")
+                        if blob_hash:
+                            recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
+                            if recall_resp.status_code == 200:
+                                recall_data = recall_resp.json()
+                                try:
+                                    startup_data["sacred_manifest"] = json.loads(recall_data.get("content", "{}"))
+                                except:
+                                    startup_data["sacred_manifest"] = recall_data.get("content")
+                            else:
+                                startup_data["errors"].append(f"Failed to recall sacred_manifest: {recall_resp.status_code}")
+                else:
+                    startup_data["errors"].append(f"Failed to search sacred_manifest: {manifest_resp.status_code}")
+
+                # Search for tool_registry
+                registry_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "tool_registry", "limit": 1})
+                if registry_resp.status_code == 200:
+                    registry_results = registry_resp.json()
+                    if registry_results.get("results"):
+                        blob_hash = registry_results["results"][0].get("blob_hash")
+                        if blob_hash:
+                            recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
+                            if recall_resp.status_code == 200:
+                                recall_data = recall_resp.json()
+                                try:
+                                    startup_data["tool_registry"] = json.loads(recall_data.get("content", "{}"))
+                                except:
+                                    startup_data["tool_registry"] = recall_data.get("content")
+                            else:
+                                startup_data["errors"].append(f"Failed to recall tool_registry: {recall_resp.status_code}")
+                else:
+                    startup_data["errors"].append(f"Failed to search tool_registry: {registry_resp.status_code}")
+
+                # Clean up errors if empty
+                if not startup_data["errors"]:
+                    del startup_data["errors"]
+
+                return startup_data
 
             else:
                 return {"error": f"Unknown tool: {name}"}
