@@ -328,35 +328,41 @@ async def call_tool(name: str, arguments: dict):
                 # Fetch sacred_manifest and tool_registry in one call
                 startup_data = {"sacred_manifest": None, "tool_registry": None, "errors": []}
 
-                # Search for sacred_manifest
-                manifest_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "sacred_manifest", "limit": 1})
+                # Search for sacred_manifest - get multiple results and find the actual manifest
+                manifest_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "sacred_manifest", "limit": 5})
                 if manifest_resp.status_code == 200:
                     manifest_results = manifest_resp.json()
-                    if manifest_results.get("results"):
-                        blob_hash = manifest_results["results"][0].get("blob_hash")
+                    for result in manifest_results.get("results", []):
+                        blob_hash = result.get("blob_hash")
                         if blob_hash:
                             recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
                             if recall_resp.status_code == 200:
                                 recall_data = recall_resp.json()
                                 try:
-                                    startup_data["sacred_manifest"] = json.loads(recall_data.get("content", "{}"))
+                                    content = json.loads(recall_data.get("content", "{}"))
+                                    if content.get("type") == "sacred_manifest":
+                                        startup_data["sacred_manifest"] = content
+                                        break
                                 except:
-                                    startup_data["sacred_manifest"] = recall_data.get("content")
+                                    pass
 
-                # Search for tool_registry
-                registry_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "tool_registry", "limit": 1})
+                # Search for tool_registry - get multiple results and find the actual registry
+                registry_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "tool_registry", "limit": 5})
                 if registry_resp.status_code == 200:
                     registry_results = registry_resp.json()
-                    if registry_results.get("results"):
-                        blob_hash = registry_results["results"][0].get("blob_hash")
+                    for result in registry_results.get("results", []):
+                        blob_hash = result.get("blob_hash")
                         if blob_hash:
                             recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
                             if recall_resp.status_code == 200:
                                 recall_data = recall_resp.json()
                                 try:
-                                    startup_data["tool_registry"] = json.loads(recall_data.get("content", "{}"))
+                                    content = json.loads(recall_data.get("content", "{}"))
+                                    if content.get("type") == "tool_registry":
+                                        startup_data["tool_registry"] = content
+                                        break
                                 except:
-                                    startup_data["tool_registry"] = recall_data.get("content")
+                                    pass
 
                 # Clean up errors if empty
                 if not startup_data["errors"]:
