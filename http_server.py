@@ -462,6 +462,20 @@ async def health_check(request: Request):
     })
 
 
+async def api_quick_brief(request: Request):
+    """Direct HTTP endpoint for quick-brief - used by CC for recovery context."""
+    branch = request.query_params.get("branch", "command-center")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(f"{BOSWELL_API}/quick-brief", params={"branch": branch})
+            if resp.status_code == 200:
+                return JSONResponse(resp.json())
+            else:
+                return JSONResponse({"error": f"HTTP {resp.status_code}", "details": resp.text}, status_code=resp.status_code)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ==================== APP ====================
 
 app = Starlette(
@@ -469,6 +483,7 @@ app = Starlette(
     routes=[
         Route("/", health_check, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
+        Route("/api/quick-brief", api_quick_brief, methods=["GET"]),
         Route("/mcp", handle_mcp_post, methods=["POST"]),
         Route("/sse", handle_sse, methods=["GET"]),
         Route("/messages/{session_id}", handle_messages, methods=["POST"]),
