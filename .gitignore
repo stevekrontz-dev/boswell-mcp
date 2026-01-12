@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# SQLite database (local dev only)
+*.db
+
+# Secrets - NEVER commit these
+service-account-key.json
+*-credentials.json
+*.pem
+*.key
+
+# Environment files
+.env
+.env.local
