@@ -5,3 +5,6 @@ psycopg2-binary>=2.9.9
 google-cloud-kms>=2.21.0
 cryptography>=42.0.0
 httpx>=0.25.0
+starlette>=0.35.0
+sse-starlette>=1.6.0
+uvicorn>=0.25.0
