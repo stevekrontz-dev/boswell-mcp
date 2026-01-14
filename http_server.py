@@ -476,6 +476,55 @@ async def api_quick_brief(request: Request):
             return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_commit(request: Request):
+    """
+    REST endpoint for webhook commits to Boswell.
+
+    POST /api/commit
+    {
+        "branch": "tint-atlanta",
+        "message": "Square webhook: payment.completed",
+        "content": { ... },
+        "tags": ["optional", "tags"],
+        "author": "webhook"  // optional, defaults to "webhook"
+    }
+    """
+    try:
+        body = await request.json()
+    except:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    # Validate required fields
+    required = ["branch", "message", "content"]
+    missing = [f for f in required if f not in body]
+    if missing:
+        return JSONResponse({"error": f"Missing required fields: {missing}"}, status_code=400)
+
+    # Build payload for Boswell API
+    payload = {
+        "branch": body["branch"],
+        "content": body["content"],
+        "message": body["message"],
+        "author": body.get("author", "webhook"),
+        "type": "memory"
+    }
+    if "tags" in body:
+        payload["tags"] = body["tags"]
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(f"{BOSWELL_API}/commit", json=payload)
+            if resp.status_code in (200, 201):
+                return JSONResponse(resp.json(), status_code=201)
+            else:
+                return JSONResponse(
+                    {"error": f"Boswell API error", "status": resp.status_code, "details": resp.text},
+                    status_code=resp.status_code
+                )
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ==================== APP ====================
 
 app = Starlette(
@@ -484,6 +533,7 @@ app = Starlette(
         Route("/", health_check, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
         Route("/api/quick-brief", api_quick_brief, methods=["GET"]),
+        Route("/api/commit", api_commit, methods=["POST"]),
         Route("/mcp", handle_mcp_post, methods=["POST"]),
         Route("/sse", handle_sse, methods=["GET"]),
         Route("/messages/{session_id}", handle_messages, methods=["POST"]),
