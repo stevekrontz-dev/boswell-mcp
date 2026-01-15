@@ -12,8 +12,8 @@ from mcp.server import Server
 from mcp.types import Tool, TextContent
 from mcp.server.stdio import stdio_server
 
-# Boswell API configuration
-BOSWELL_API = "https://stevekrontz.com/boswell/v2"
+# Boswell API configuration - Railway pgvector deployment (v3)
+BOSWELL_API = "https://delightful-imagination-production-f6a1.up.railway.app/v2"
 
 # Initialize MCP server
 app = Server("boswell-mcp")
