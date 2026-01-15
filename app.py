@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Boswell v2 API - Git-Style Memory Architecture
-PostgreSQL version with multi-tenant support + Encryption (Phase 2)
+Boswell v3 API - Vector-Native Memory Architecture
+PostgreSQL + pgvector for semantic search + async embeddings
 """
 
 import psycopg2
@@ -9,12 +9,112 @@ import psycopg2.extras
 import hashlib
 import json
 import os
+import re
+import threading
 from datetime import datetime
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
+
+# ==================== OPENAI EMBEDDING ====================
+
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+_openai_client = None
+
+def get_openai_client():
+    """Lazy init OpenAI client."""
+    global _openai_client
+    if _openai_client is None and OPENAI_API_KEY:
+        from openai import OpenAI
+        _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client
+
+def generate_embedding(text: str) -> list[float]:
+    """Generate embedding for text using OpenAI."""
+    client = get_openai_client()
+    if not client:
+        return None
+
+    # Truncate if too long
+    if len(text) > 30000:
+        text = text[:30000]
+
+    try:
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text,
+            dimensions=1536
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"[EMBEDDING] Failed: {e}", file=sys.stderr)
+        return None
+
+def embed_blob_async(blob_hash: str, content: str):
+    """Fire-and-forget embedding in background thread."""
+    def do_embed():
+        embedding = generate_embedding(content)
+        if embedding:
+            try:
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE blobs
+                    SET embedding = %s::vector, embedding_status = 'complete'
+                    WHERE blob_hash = %s;
+                """, (embedding, blob_hash))
+                conn.commit()
+                cur.close()
+                conn.close()
+                print(f"[EMBEDDING] Embedded {blob_hash[:12]}", file=sys.stderr)
+            except Exception as e:
+                print(f"[EMBEDDING] DB update failed: {e}", file=sys.stderr)
+        else:
+            # Mark as failed
+            try:
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE blobs
+                    SET embedding_status = 'failed'
+                    WHERE blob_hash = %s;
+                """, (blob_hash,))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except:
+                pass
+
+    thread = threading.Thread(target=do_embed, daemon=True)
+    thread.start()
+
+# ==================== SEARCH MODE DETECTION ====================
+
+# Known literal keywords that should bypass semantic search
+LITERAL_KEYWORDS = {'sacred_manifest', 'tool_registry', 'GENESIS', 'debate-'}
+HASH_PATTERN = re.compile(r'^[a-f0-9]{12,64}$')
+
+def detect_search_mode(query: str) -> str:
+    """Auto-detect whether to use literal or semantic search."""
+    query_lower = query.lower().strip()
+
+    # Hash pattern -> literal
+    if HASH_PATTERN.match(query_lower):
+        return 'literal'
+
+    # Known keywords -> literal
+    for keyword in LITERAL_KEYWORDS:
+        if keyword.lower() in query_lower:
+            return 'literal'
+
+    # Very short queries (< 3 words) -> literal
+    if len(query_lower.split()) < 3:
+        return 'literal'
+
+    # Default to semantic for longer natural language queries
+    return 'semantic'
 
 # Encryption support (Phase 2)
 ENCRYPTION_ENABLED = os.environ.get('ENCRYPTION_ENABLED', 'false').lower() == 'true'
@@ -151,11 +251,12 @@ def health_check():
 
         return jsonify({
             'status': 'ok',
-            'service': 'boswell-v2',
-            'version': '2.7.0-encrypted',
+            'service': 'boswell-v3',
+            'version': '3.0.0-vector',
             'platform': 'railway',
-            'database': 'postgres',
+            'database': 'postgres+pgvector',
             'encryption': encryption_status,
+            'embeddings': 'openai' if OPENAI_API_KEY else 'disabled',
             'branches': branch_count,
             'commits': commit_count,
             'timestamp': datetime.utcnow().isoformat() + 'Z'
@@ -350,13 +451,18 @@ def create_commit():
     db.commit()
     cur.close()
 
+    # Fire-and-forget async embedding
+    if OPENAI_API_KEY:
+        embed_blob_async(blob_hash, content_str)
+
     return jsonify({
         'status': 'committed',
         'commit_hash': commit_hash,
         'blob_hash': blob_hash,
         'tree_hash': tree_hash,
         'branch': branch,
-        'message': message
+        'message': message,
+        'embedding': 'pending' if OPENAI_API_KEY else 'disabled'
     }), 201
 
 @app.route('/v2/log', methods=['GET'])
@@ -394,50 +500,110 @@ def get_log():
 
 @app.route('/v2/search', methods=['GET'])
 def search_memories():
-    """Search memories across branches."""
+    """Search memories with hybrid mode support.
+
+    Modes:
+    - 'auto' (default): Heuristic detection - literal for short/keyword queries, semantic for natural language
+    - 'literal': Traditional LIKE-based substring search
+    - 'semantic': Vector similarity search using embeddings
+    """
     query = request.args.get('q', '')
     memory_type = request.args.get('type')
-    limit = request.args.get('limit', 20, type=int)
+    limit = request.args.get('limit', 5, type=int)  # Default 5 for v3
+    mode = request.args.get('mode', 'auto')
 
     if not query:
         return jsonify({'error': 'Search query required'}), 400
 
+    # Determine actual search mode
+    if mode == 'auto':
+        actual_mode = detect_search_mode(query)
+    else:
+        actual_mode = mode
+
     cur = get_cursor()
-
-    sql = '''
-        SELECT DISTINCT b.blob_hash, b.content, b.content_type, b.created_at,
-               c.commit_hash, c.message, c.author
-        FROM blobs b
-        JOIN tree_entries t ON b.blob_hash = t.blob_hash AND b.tenant_id = t.tenant_id
-        JOIN commits c ON t.tree_hash = c.tree_hash AND t.tenant_id = c.tenant_id
-        WHERE b.content LIKE %s AND b.tenant_id = %s
-    '''
-    params = [f'%{query}%', DEFAULT_TENANT]
-
-    if memory_type:
-        sql += ' AND b.content_type = %s'
-        params.append(memory_type)
-
-    sql += ' ORDER BY b.created_at DESC LIMIT %s'
-    params.append(limit)
-
-    cur.execute(sql, params)
     results = []
 
-    for row in cur.fetchall():
-        content = row['content']
-        results.append({
-            'blob_hash': row['blob_hash'],
-            'content': content[:500] + '...' if len(content) > 500 else content,
-            'content_type': row['content_type'],
-            'created_at': str(row['created_at']) if row['created_at'] else None,
-            'commit_hash': row['commit_hash'],
-            'message': row['message'],
-            'author': row['author']
-        })
+    if actual_mode == 'semantic' and OPENAI_API_KEY:
+        # Semantic search using vector similarity
+        query_embedding = generate_embedding(query)
+        if query_embedding:
+            sql = '''
+                SELECT DISTINCT b.blob_hash, b.content, b.content_type, b.created_at,
+                       c.commit_hash, c.message, c.author,
+                       b.embedding <=> %s::vector AS distance
+                FROM blobs b
+                JOIN tree_entries t ON b.blob_hash = t.blob_hash AND b.tenant_id = t.tenant_id
+                JOIN commits c ON t.tree_hash = c.tree_hash AND t.tenant_id = c.tenant_id
+                WHERE b.embedding IS NOT NULL AND b.tenant_id = %s
+            '''
+            params = [query_embedding, DEFAULT_TENANT]
+
+            if memory_type:
+                sql += ' AND b.content_type = %s'
+                params.append(memory_type)
+
+            sql += ' ORDER BY distance LIMIT %s'
+            params.append(limit)
+
+            cur.execute(sql, params)
+
+            for row in cur.fetchall():
+                content = row['content']
+                results.append({
+                    'blob_hash': row['blob_hash'],
+                    'content': content[:500] + '...' if len(content) > 500 else content,
+                    'content_type': row['content_type'],
+                    'created_at': str(row['created_at']) if row['created_at'] else None,
+                    'commit_hash': row['commit_hash'],
+                    'message': row['message'],
+                    'author': row['author'],
+                    'similarity': 1 - row['distance']  # Convert distance to similarity
+                })
+        else:
+            # Fallback to literal if embedding fails
+            actual_mode = 'literal'
+
+    if actual_mode == 'literal' or not results:
+        # Traditional LIKE-based search
+        sql = '''
+            SELECT DISTINCT b.blob_hash, b.content, b.content_type, b.created_at,
+                   c.commit_hash, c.message, c.author
+            FROM blobs b
+            JOIN tree_entries t ON b.blob_hash = t.blob_hash AND b.tenant_id = t.tenant_id
+            JOIN commits c ON t.tree_hash = c.tree_hash AND t.tenant_id = c.tenant_id
+            WHERE b.content LIKE %s AND b.tenant_id = %s
+        '''
+        params = [f'%{query}%', DEFAULT_TENANT]
+
+        if memory_type:
+            sql += ' AND b.content_type = %s'
+            params.append(memory_type)
+
+        sql += ' ORDER BY b.created_at DESC LIMIT %s'
+        params.append(limit)
+
+        cur.execute(sql, params)
+
+        for row in cur.fetchall():
+            content = row['content']
+            results.append({
+                'blob_hash': row['blob_hash'],
+                'content': content[:500] + '...' if len(content) > 500 else content,
+                'content_type': row['content_type'],
+                'created_at': str(row['created_at']) if row['created_at'] else None,
+                'commit_hash': row['commit_hash'],
+                'message': row['message'],
+                'author': row['author']
+            })
 
     cur.close()
-    return jsonify({'query': query, 'results': results, 'count': len(results)})
+    return jsonify({
+        'query': query,
+        'mode': actual_mode,
+        'results': results,
+        'count': len(results)
+    })
 
 def decrypt_blob_content(blob):
     """Decrypt blob content if encrypted, otherwise return plaintext."""
@@ -570,6 +736,90 @@ def quick_brief():
         'recent_commits': recent_commits,
         'pending_sessions': pending_sessions,
         'branches': branches,
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    })
+
+@app.route('/v2/startup', methods=['GET'])
+def semantic_startup():
+    """v3 semantic startup - pull contextually relevant memories.
+
+    Uses semantic search to find the most relevant memories for the
+    current conversation context, rather than hardcoded lookups.
+
+    Query params:
+    - context: Optional context string to search for relevant memories
+    - k: Number of relevant memories to return (default: 5)
+    """
+    context = request.args.get('context', 'important decisions and active commitments')
+    k = request.args.get('k', 5, type=int)
+
+    cur = get_cursor()
+
+    # Always include sacred commitments via literal search
+    sacred_manifest = None
+    tool_registry = None
+
+    # Fetch sacred_manifest
+    cur.execute("""
+        SELECT b.content FROM blobs b
+        WHERE b.content LIKE %s AND b.tenant_id = %s
+        ORDER BY b.created_at DESC LIMIT 1
+    """, ('%"type": "sacred_manifest"%', DEFAULT_TENANT))
+    row = cur.fetchone()
+    if row:
+        try:
+            sacred_manifest = json.loads(row['content'])
+        except:
+            pass
+
+    # Fetch tool_registry
+    cur.execute("""
+        SELECT b.content FROM blobs b
+        WHERE b.content LIKE %s AND b.tenant_id = %s
+        ORDER BY b.created_at DESC LIMIT 1
+    """, ('%"type": "tool_registry"%', DEFAULT_TENANT))
+    row = cur.fetchone()
+    if row:
+        try:
+            tool_registry = json.loads(row['content'])
+        except:
+            pass
+
+    # Semantic search for contextually relevant memories
+    relevant_memories = []
+    if OPENAI_API_KEY:
+        query_embedding = generate_embedding(context)
+        if query_embedding:
+            cur.execute("""
+                SELECT b.blob_hash, substring(b.content, 1, 300) as preview,
+                       c.message, b.embedding <=> %s::vector AS distance
+                FROM blobs b
+                JOIN tree_entries t ON b.blob_hash = t.blob_hash AND b.tenant_id = t.tenant_id
+                JOIN commits c ON t.tree_hash = c.tree_hash AND t.tenant_id = c.tenant_id
+                WHERE b.embedding IS NOT NULL AND b.tenant_id = %s
+                ORDER BY distance LIMIT %s
+            """, (query_embedding, DEFAULT_TENANT, k))
+
+            for row in cur.fetchall():
+                relevant_memories.append({
+                    'blob_hash': row['blob_hash'][:12] + '...',
+                    'message': row['message'],
+                    'preview': row['preview'][:100] + '...' if len(row['preview']) > 100 else row['preview'],
+                    'relevance': round(1 - row['distance'], 3)
+                })
+
+    # Get branch list
+    cur.execute('SELECT name FROM branches WHERE tenant_id = %s', (DEFAULT_TENANT,))
+    branches = [row['name'] for row in cur.fetchall()]
+
+    cur.close()
+
+    return jsonify({
+        'sacred_manifest': sacred_manifest,
+        'tool_registry': tool_registry,
+        'relevant_memories': relevant_memories,
+        'branches': branches,
+        'context_query': context,
         'timestamp': datetime.utcnow().isoformat() + 'Z'
     })
 

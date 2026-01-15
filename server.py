@@ -234,10 +234,20 @@ async def list_tools():
         ),
         Tool(
             name="boswell_startup",
-            description="Load startup context in ONE call. Returns sacred_manifest (active commitments) + tool_registry (available tools). Call this FIRST at the start of every conversation.",
+            description="Load startup context. Returns commitments + semantically relevant memories. Call FIRST every conversation.",
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context for semantic retrieval (default: 'important decisions and active commitments')"
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Number of relevant memories to return (default: 5)",
+                        "default": 5
+                    }
+                }
             }
         ),
     ]
@@ -325,50 +335,17 @@ async def call_tool(name: str, arguments: dict):
                 resp = await client.post(f"{BOSWELL_API}/checkout", json={"branch": arguments["branch"]})
 
             elif name == "boswell_startup":
-                # Fetch sacred_manifest and tool_registry in one call
-                startup_data = {"sacred_manifest": None, "tool_registry": None, "errors": []}
-
-                # Search for sacred_manifest - get multiple results and find the actual manifest
-                manifest_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "sacred_manifest", "limit": 5})
-                if manifest_resp.status_code == 200:
-                    manifest_results = manifest_resp.json()
-                    for result in manifest_results.get("results", []):
-                        blob_hash = result.get("blob_hash")
-                        if blob_hash:
-                            recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
-                            if recall_resp.status_code == 200:
-                                recall_data = recall_resp.json()
-                                try:
-                                    content = json.loads(recall_data.get("content", "{}"))
-                                    if content.get("type") == "sacred_manifest":
-                                        startup_data["sacred_manifest"] = content
-                                        break
-                                except:
-                                    pass
-
-                # Search for tool_registry - get multiple results and find the actual registry
-                registry_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "tool_registry", "limit": 5})
-                if registry_resp.status_code == 200:
-                    registry_results = registry_resp.json()
-                    for result in registry_results.get("results", []):
-                        blob_hash = result.get("blob_hash")
-                        if blob_hash:
-                            recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
-                            if recall_resp.status_code == 200:
-                                recall_data = recall_resp.json()
-                                try:
-                                    content = json.loads(recall_data.get("content", "{}"))
-                                    if content.get("type") == "tool_registry":
-                                        startup_data["tool_registry"] = content
-                                        break
-                                except:
-                                    pass
-
-                # Clean up errors if empty
-                if not startup_data["errors"]:
-                    del startup_data["errors"]
-
-                return [TextContent(type="text", text=json.dumps(startup_data, indent=2))]
+                # v3: Use semantic startup endpoint for contextually relevant memories
+                context = arguments.get("context", "important decisions and active commitments")
+                k = arguments.get("k", 5)
+                resp = await client.get(
+                    f"{BOSWELL_API}/startup",
+                    params={"context": context, "k": k}
+                )
+                if resp.status_code == 200:
+                    return [TextContent(type="text", text=json.dumps(resp.json(), indent=2))]
+                else:
+                    return [TextContent(type="text", text=f"Error {resp.status_code}: {resp.text}")]
 
             else:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]

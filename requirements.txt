@@ -8,3 +8,5 @@ httpx>=0.25.0
 starlette>=0.35.0
 sse-starlette>=1.6.0
 uvicorn>=0.25.0
+openai>=1.0.0
+pgvector>=0.2.0
