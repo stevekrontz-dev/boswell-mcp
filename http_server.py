@@ -81,6 +81,18 @@ TOOLS = [
         }
     },
     {
+        "name": "boswell_semantic_search",
+        "description": "Semantic search using AI embeddings. Finds conceptually related memories even without exact keyword matches. Use for conceptual queries like 'decisions about architecture' or 'patent opportunities'.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Conceptual search query"},
+                "limit": {"type": "integer", "description": "Max results (default: 10)", "default": 10}
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "boswell_recall",
         "description": "Recall a specific memory by its blob hash or commit hash.",
         "inputSchema": {
@@ -191,6 +203,12 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
                 if "limit" in arguments:
                     params["limit"] = arguments["limit"]
                 resp = await client.get(f"{BOSWELL_API}/search", params=params)
+
+            elif name == "boswell_semantic_search":
+                params = {"q": arguments["query"]}
+                if "limit" in arguments:
+                    params["limit"] = arguments["limit"]
+                resp = await client.get(f"{BOSWELL_API}/semantic-search", params=params)
 
             elif name == "boswell_recall":
                 params = {}
