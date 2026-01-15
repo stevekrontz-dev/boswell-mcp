@@ -400,7 +400,7 @@ def create_commit():
         cur.execute(
             '''INSERT INTO blobs (blob_hash, tenant_id, content, content_encrypted, nonce, encryption_key_id, content_type, created_at, byte_size)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (blob_hash) DO NOTHING''',
+               ON CONFLICT (tenant_id, blob_hash) DO NOTHING''',
             (blob_hash, DEFAULT_TENANT, content_str, psycopg2.Binary(ciphertext), psycopg2.Binary(nonce), key_id, memory_type, now, len(content_str))
         )
     else:
@@ -408,7 +408,7 @@ def create_commit():
         cur.execute(
             '''INSERT INTO blobs (blob_hash, tenant_id, content, content_type, created_at, byte_size)
                VALUES (%s, %s, %s, %s, %s, %s)
-               ON CONFLICT (blob_hash) DO NOTHING''',
+               ON CONFLICT (tenant_id, blob_hash) DO NOTHING''',
             (blob_hash, DEFAULT_TENANT, content_str, memory_type, now, len(content_str))
         )
 
@@ -812,12 +812,37 @@ def semantic_startup():
     cur.execute('SELECT name FROM branches WHERE tenant_id = %s', (DEFAULT_TENANT,))
     branches = [row['name'] for row in cur.fetchall()]
 
+    # Get open tasks (priority 1-3 = high priority, show first)
+    open_tasks = []
+    try:
+        cur.execute("""
+            SELECT id, description, branch, assigned_to, priority, created_at, metadata
+            FROM tasks 
+            WHERE tenant_id = %s AND status = 'open'
+            ORDER BY priority ASC, created_at ASC
+            LIMIT 10
+        """, (DEFAULT_TENANT,))
+        for row in cur.fetchall():
+            open_tasks.append({
+                'id': str(row['id']),
+                'description': row['description'],
+                'branch': row['branch'],
+                'assigned_to': row['assigned_to'],
+                'priority': row['priority'],
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'metadata': row['metadata'] if row['metadata'] else {}
+            })
+    except Exception as e:
+        # tasks table might not exist yet - that's ok
+        print(f"[STARTUP] Tasks query failed (table may not exist): {e}", file=sys.stderr)
+
     cur.close()
 
     return jsonify({
         'sacred_manifest': sacred_manifest,
         'tool_registry': tool_registry,
         'relevant_memories': relevant_memories,
+        'open_tasks': open_tasks,
         'branches': branches,
         'context_query': context,
         'timestamp': datetime.utcnow().isoformat() + 'Z'
