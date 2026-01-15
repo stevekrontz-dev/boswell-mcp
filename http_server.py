@@ -242,56 +242,14 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
                 resp = await client.post(f"{BOSWELL_API}/checkout", json={"branch": arguments["branch"]})
 
             elif name == "boswell_startup":
-                # Fetch sacred_manifest and tool_registry in one call
-                startup_data = {"sacred_manifest": None, "tool_registry": None, "errors": []}
-
-                # Search for sacred_manifest - get multiple results and find the actual manifest
-                manifest_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "sacred_manifest", "limit": 5})
-                if manifest_resp.status_code == 200:
-                    manifest_results = manifest_resp.json()
-                    for result in manifest_results.get("results", []):
-                        blob_hash = result.get("blob_hash")
-                        if blob_hash:
-                            recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
-                            if recall_resp.status_code == 200:
-                                recall_data = recall_resp.json()
-                                try:
-                                    content = json.loads(recall_data.get("content", "{}"))
-                                    # Check if this is the actual sacred_manifest (not a session log mentioning it)
-                                    if content.get("type") == "sacred_manifest":
-                                        startup_data["sacred_manifest"] = content
-                                        break
-                                except:
-                                    pass
+                # v3: Use the /v2/startup endpoint which does proper LIKE query + semantic search
+                context = arguments.get("context", "important decisions and active commitments")
+                k = arguments.get("k", 5)
+                resp = await client.get(f"{BOSWELL_API}/startup", params={"context": context, "k": k})
+                if resp.status_code == 200:
+                    return resp.json()
                 else:
-                    startup_data["errors"].append(f"Failed to search sacred_manifest: {manifest_resp.status_code}")
-
-                # Search for tool_registry - get multiple results and find the actual registry
-                registry_resp = await client.get(f"{BOSWELL_API}/search", params={"q": "tool_registry", "limit": 5})
-                if registry_resp.status_code == 200:
-                    registry_results = registry_resp.json()
-                    for result in registry_results.get("results", []):
-                        blob_hash = result.get("blob_hash")
-                        if blob_hash:
-                            recall_resp = await client.get(f"{BOSWELL_API}/recall", params={"hash": blob_hash})
-                            if recall_resp.status_code == 200:
-                                recall_data = recall_resp.json()
-                                try:
-                                    content = json.loads(recall_data.get("content", "{}"))
-                                    # Check if this is the actual tool_registry (not a session log mentioning it)
-                                    if content.get("type") == "tool_registry":
-                                        startup_data["tool_registry"] = content
-                                        break
-                                except:
-                                    pass
-                else:
-                    startup_data["errors"].append(f"Failed to search tool_registry: {registry_resp.status_code}")
-
-                # Clean up errors if empty
-                if not startup_data["errors"]:
-                    del startup_data["errors"]
-
-                return startup_data
+                    return {"error": f"Startup failed: {resp.status_code}", "details": resp.text}
 
             else:
                 return {"error": f"Unknown tool: {name}"}
