@@ -400,7 +400,7 @@ def create_commit():
         cur.execute(
             '''INSERT INTO blobs (blob_hash, tenant_id, content, content_encrypted, nonce, encryption_key_id, content_type, created_at, byte_size)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (tenant_id, blob_hash) DO NOTHING''',
+               ON CONFLICT (blob_hash) DO NOTHING''',
             (blob_hash, DEFAULT_TENANT, content_str, psycopg2.Binary(ciphertext), psycopg2.Binary(nonce), key_id, memory_type, now, len(content_str))
         )
     else:
@@ -408,7 +408,7 @@ def create_commit():
         cur.execute(
             '''INSERT INTO blobs (blob_hash, tenant_id, content, content_type, created_at, byte_size)
                VALUES (%s, %s, %s, %s, %s, %s)
-               ON CONFLICT (tenant_id, blob_hash) DO NOTHING''',
+               ON CONFLICT (blob_hash) DO NOTHING''',
             (blob_hash, DEFAULT_TENANT, content_str, memory_type, now, len(content_str))
         )
 
@@ -441,12 +441,14 @@ def create_commit():
 
     for tag in tags:
         tag_str = tag if isinstance(tag, str) else str(tag)
-        cur.execute(
-            '''INSERT INTO tags (tenant_id, blob_hash, tag, created_at)
-               VALUES (%s, %s, %s, %s)
-               ON CONFLICT (tenant_id, blob_hash, tag) DO NOTHING''',
-            (DEFAULT_TENANT, blob_hash, tag_str, now)
-        )
+        try:
+            cur.execute(
+                '''INSERT INTO tags (tenant_id, blob_hash, tag, created_at)
+                   VALUES (%s, %s, %s, %s)''',
+                (DEFAULT_TENANT, blob_hash, tag_str, now)
+            )
+        except Exception:
+            pass  # Ignore duplicate tags
 
     db.commit()
     cur.close()
