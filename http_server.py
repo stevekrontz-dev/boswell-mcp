@@ -228,6 +228,17 @@ TOOLS = [
             "required": ["task_id"]
         }
     },
+    {
+        "name": "boswell_delete_task",
+        "description": "Soft delete a task (sets status to 'deleted'). Use to clean up completed or cancelled tasks from the queue.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to delete"}
+            },
+            "required": ["task_id"]
+        }
+    },
 ]
 
 
@@ -348,6 +359,9 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
                     if field in arguments:
                         payload[field] = arguments[field]
                 resp = await client.patch(f"{BOSWELL_API}/tasks/{arguments['task_id']}", json=payload)
+
+            elif name == "boswell_delete_task":
+                resp = await client.delete(f"{BOSWELL_API}/tasks/{arguments['task_id']}")
 
             else:
                 return {"error": f"Unknown tool: {name}"}
