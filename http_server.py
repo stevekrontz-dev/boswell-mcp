@@ -173,6 +173,46 @@ TOOLS = [
             "properties": {}
         }
     },
+    {
+        "name": "boswell_claim_task",
+        "description": "Claim a task for this agent instance. Prevents other agents from working on it. Use when starting work on a task from the queue.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to claim"},
+                "instance_id": {"type": "string", "description": "Your unique instance identifier (e.g., 'CC1', 'CW-PM')"}
+            },
+            "required": ["task_id", "instance_id"]
+        }
+    },
+    {
+        "name": "boswell_release_task",
+        "description": "Release a claimed task. Use 'completed' when done, 'blocked' if stuck, 'manual' to unclaim without status change.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to release"},
+                "instance_id": {"type": "string", "description": "Your instance identifier"},
+                "reason": {"type": "string", "enum": ["completed", "blocked", "timeout", "manual"], "description": "Why releasing (default: manual)"}
+            },
+            "required": ["task_id", "instance_id"]
+        }
+    },
+    {
+        "name": "boswell_update_task",
+        "description": "Update a task's fields (description, status, priority, metadata). Use to report progress or modify task details.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to update"},
+                "status": {"type": "string", "enum": ["open", "claimed", "blocked", "done"], "description": "New status"},
+                "description": {"type": "string", "description": "Updated description"},
+                "priority": {"type": "integer", "description": "Priority (1=highest)"},
+                "metadata": {"type": "object", "description": "Additional metadata to merge"}
+            },
+            "required": ["task_id"]
+        }
+    },
 ]
 
 
@@ -268,6 +308,24 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
                     return resp.json()
                 else:
                     return {"error": f"Startup failed: {resp.status_code}", "details": resp.text}
+
+            elif name == "boswell_claim_task":
+                payload = {"instance_id": arguments["instance_id"]}
+                resp = await client.post(f"{BOSWELL_API}/tasks/{arguments['task_id']}/claim", json=payload)
+
+            elif name == "boswell_release_task":
+                payload = {
+                    "instance_id": arguments["instance_id"],
+                    "reason": arguments.get("reason", "manual")
+                }
+                resp = await client.post(f"{BOSWELL_API}/tasks/{arguments['task_id']}/release", json=payload)
+
+            elif name == "boswell_update_task":
+                payload = {}
+                for field in ["status", "description", "priority", "metadata"]:
+                    if field in arguments:
+                        payload[field] = arguments[field]
+                resp = await client.patch(f"{BOSWELL_API}/tasks/{arguments['task_id']}", json=payload)
 
             else:
                 return {"error": f"Unknown tool: {name}"}
