@@ -7,13 +7,14 @@ allowing Claude to search, recall, and commit memories directly.
 """
 
 import json
+import os
 import httpx
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 from mcp.server.stdio import stdio_server
 
-# Boswell API configuration - Railway pgvector deployment (v3)
-BOSWELL_API = "https://delightful-imagination-production-f6a1.up.railway.app/v2"
+# Boswell API configuration - pulled from environment, Railway sets this
+BOSWELL_API = os.environ.get('BOSWELL_API', 'http://localhost:8000/v2')
 
 # Initialize MCP server
 app = Server("boswell-mcp")
