@@ -265,6 +265,51 @@ TOOLS = [
             "properties": {}
         }
     },
+    # TRAILS (Memory Path Tracking)
+    {
+        "name": "boswell_record_trail",
+        "description": "Record a traversal between two memories. Strengthens the path for future recall.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source_blob": {"type": "string", "description": "Source memory blob hash"},
+                "target_blob": {"type": "string", "description": "Target memory blob hash"}
+            },
+            "required": ["source_blob", "target_blob"]
+        }
+    },
+    {
+        "name": "boswell_hot_trails",
+        "description": "Get the strongest memory trails, sorted by strength. These are frequently traversed paths.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max trails to return (default: 20)"}
+            }
+        }
+    },
+    {
+        "name": "boswell_trails_from",
+        "description": "Get outbound trails from a specific memory. Shows what memories are often accessed after this one.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "blob": {"type": "string", "description": "Source memory blob hash"}
+            },
+            "required": ["blob"]
+        }
+    },
+    {
+        "name": "boswell_trails_to",
+        "description": "Get inbound trails to a specific memory. Shows what memories often lead to this one.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "blob": {"type": "string", "description": "Target memory blob hash"}
+            },
+            "required": ["blob"]
+        }
+    },
 ]
 
 
@@ -400,6 +445,26 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
 
             elif name == "boswell_halt_status":
                 resp = await client.get(f"{BOSWELL_API}/tasks/halt-status")
+
+            # TRAILS
+            elif name == "boswell_record_trail":
+                payload = {
+                    "source_blob": arguments["source_blob"],
+                    "target_blob": arguments["target_blob"]
+                }
+                resp = await client.post(f"{BOSWELL_API}/trails/record", json=payload)
+
+            elif name == "boswell_hot_trails":
+                params = {}
+                if "limit" in arguments:
+                    params["limit"] = arguments["limit"]
+                resp = await client.get(f"{BOSWELL_API}/trails/hot", params=params)
+
+            elif name == "boswell_trails_from":
+                resp = await client.get(f"{BOSWELL_API}/trails/from/{arguments['blob']}")
+
+            elif name == "boswell_trails_to":
+                resp = await client.get(f"{BOSWELL_API}/trails/to/{arguments['blob']}")
 
             else:
                 return {"error": f"Unknown tool: {name}"}
