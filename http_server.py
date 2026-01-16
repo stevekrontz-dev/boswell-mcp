@@ -239,6 +239,32 @@ TOOLS = [
             "required": ["task_id"]
         }
     },
+    {
+        "name": "boswell_halt_tasks",
+        "description": "EMERGENCY STOP - Halt all task processing. Blocks all claimed tasks, prevents new claims. Use when swarm behavior is problematic.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "Why halting (default: 'Manual emergency halt')"}
+            }
+        }
+    },
+    {
+        "name": "boswell_resume_tasks",
+        "description": "Resume task processing after a halt. Clears the halt flag and allows new claims.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "boswell_halt_status",
+        "description": "Check if the task system is currently halted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
 ]
 
 
@@ -362,6 +388,18 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
 
             elif name == "boswell_delete_task":
                 resp = await client.delete(f"{BOSWELL_API}/tasks/{arguments['task_id']}")
+
+            elif name == "boswell_halt_tasks":
+                payload = {}
+                if "reason" in arguments:
+                    payload["reason"] = arguments["reason"]
+                resp = await client.post(f"{BOSWELL_API}/tasks/halt", json=payload)
+
+            elif name == "boswell_resume_tasks":
+                resp = await client.post(f"{BOSWELL_API}/tasks/resume", json={})
+
+            elif name == "boswell_halt_status":
+                resp = await client.get(f"{BOSWELL_API}/tasks/halt-status")
 
             else:
                 return {"error": f"Unknown tool: {name}"}
