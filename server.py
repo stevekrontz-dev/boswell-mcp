@@ -273,6 +273,21 @@ async def list_tools():
 
         # TASK QUEUE OPERATIONS
         Tool(
+            name="boswell_create_task",
+            description="Create a new task in the queue. Use to spawn subtasks or add work for yourself or other agents.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "What needs to be done"},
+                    "branch": {"type": "string", "description": "Which branch this relates to (command-center, tint-atlanta, etc.)"},
+                    "priority": {"type": "integer", "description": "Priority 1-10 (1=highest, default=5)"},
+                    "assigned_to": {"type": "string", "description": "Optional: assign to specific instance"},
+                    "metadata": {"type": "object", "description": "Optional: additional context"}
+                },
+                "required": ["description"]
+            }
+        ),
+        Tool(
             name="boswell_claim_task",
             description="Claim a task for this agent instance. Prevents other agents from working on it. Use when starting work on a task from the queue.",
             inputSchema={
@@ -414,6 +429,13 @@ async def call_tool(name: str, arguments: dict):
                     return [TextContent(type="text", text=json.dumps(resp.json(), indent=2))]
                 else:
                     return [TextContent(type="text", text=f"Error {resp.status_code}: {resp.text}")]
+
+            elif name == "boswell_create_task":
+                payload = {"description": arguments["description"]}
+                for field in ["branch", "priority", "assigned_to", "metadata"]:
+                    if field in arguments:
+                        payload[field] = arguments[field]
+                resp = await client.post(f"{BOSWELL_API}/tasks", json=payload)
 
             elif name == "boswell_claim_task":
                 payload = {"instance_id": arguments["instance_id"]}
