@@ -370,8 +370,15 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
                 resp = await client.get(f"{BOSWELL_API}/reflect")
 
             elif name == "boswell_commit":
+                branch = arguments["branch"]
+                # Check if branch exists, create if not
+                head_check = await client.get(f"{BOSWELL_API}/head", params={"branch": branch})
+                if head_check.status_code == 404:
+                    # Branch doesn't exist - create it first
+                    await client.post(f"{BOSWELL_API}/branch", json={"name": branch})
+                
                 payload = {
-                    "branch": arguments["branch"],
+                    "branch": branch,
                     "content": arguments["content"],
                     "message": arguments["message"],
                     "author": "claude-web",
