@@ -421,8 +421,15 @@ def create_commit():
 
     cur.execute('SELECT head_commit FROM branches WHERE name = %s AND tenant_id = %s', (branch, DEFAULT_TENANT))
     branch_row = cur.fetchone()
-    parent_hash = branch_row['head_commit'] if branch_row else None
-    if parent_hash == 'GENESIS':
+    if branch_row:
+        parent_hash = branch_row['head_commit'] if branch_row['head_commit'] != 'GENESIS' else None
+    else:
+        # Auto-create branch on first commit
+        cur.execute(
+            '''INSERT INTO branches (tenant_id, name, head_commit, created_at)
+               VALUES (%s, %s, %s, %s)''',
+            (DEFAULT_TENANT, branch, 'GENESIS', now)
+        )
         parent_hash = None
 
     commit_data = f"{tree_hash}:{parent_hash}:{message}:{now}"
