@@ -204,6 +204,10 @@ async def list_tools():
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional tags for categorization"
+                    },
+                    "force_branch": {
+                        "type": "boolean",
+                        "description": "Suppress routing warnings - use when intentionally committing to a branch despite mismatch"
                     }
                 },
                 "required": ["branch", "content", "message"]
@@ -491,7 +495,17 @@ async def call_tool(name: str, arguments: dict):
                 }
                 if "tags" in arguments:
                     payload["tags"] = arguments["tags"]
+                if arguments.get("force_branch"):
+                    payload["force_branch"] = True
                 resp = await client.post(f"{BOSWELL_API}/commit", json=payload)
+
+                # Phase 5: Surface routing warnings
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    if "routing_suggestion" in data:
+                        rs = data["routing_suggestion"]
+                        warning = f"\n\nROUTING WARNING: {rs['message']}\nAdd force_branch=true to suppress."
+                        return [TextContent(type="text", text=json.dumps(data, indent=2) + warning)]
 
             elif name == "boswell_link":
                 payload = {
