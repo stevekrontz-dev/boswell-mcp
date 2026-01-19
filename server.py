@@ -8,13 +8,19 @@ allowing Claude to search, recall, and commit memories directly.
 
 import json
 import os
+import sys
 import httpx
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 from mcp.server.stdio import stdio_server
 
+# Debug logging to stderr (won't break stdio protocol)
+def log(msg):
+    print(f"[BOSWELL-DEBUG] {msg}", file=sys.stderr, flush=True)
+
 # Boswell API configuration - pulled from environment, Railway sets this
 BOSWELL_API = os.environ.get('BOSWELL_API', 'http://localhost:8000/v2')
+log(f"BOSWELL_API = {BOSWELL_API}")
 
 # Initialize MCP server
 app = Server("boswell-mcp")
@@ -418,9 +424,11 @@ async def list_tools():
 @app.call_tool()
 async def call_tool(name: str, arguments: dict):
     """Handle tool calls by proxying to Boswell API."""
+    log(f"TOOL CALL START: {name} with args: {arguments}")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
+            log(f"Making request to {BOSWELL_API} for tool: {name}")
             if name == "boswell_brief":
                 branch = arguments.get("branch", "command-center")
                 resp = await client.get(f"{BOSWELL_API}/quick-brief", params={"branch": branch})
@@ -574,21 +582,28 @@ async def call_tool(name: str, arguments: dict):
                 resp = await client.get(f"{BOSWELL_API}/trails/to/{arguments['blob']}")
 
             else:
+                log(f"Unknown tool: {name}")
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
             # Format response
+            log(f"Got response: status={resp.status_code}")
             if resp.status_code == 200 or resp.status_code == 201:
                 try:
                     data = resp.json()
+                    log(f"Returning success response for {name}")
                     return [TextContent(type="text", text=json.dumps(data, indent=2))]
                 except:
+                    log(f"Returning raw text response for {name}")
                     return [TextContent(type="text", text=resp.text)]
             else:
+                log(f"Returning error response: {resp.status_code}")
                 return [TextContent(type="text", text=f"Error {resp.status_code}: {resp.text}")]
 
         except httpx.TimeoutException:
+            log(f"TIMEOUT for tool {name}")
             return [TextContent(type="text", text="Error: Request to Boswell API timed out")]
         except Exception as e:
+            log(f"EXCEPTION for tool {name}: {str(e)}")
             return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
