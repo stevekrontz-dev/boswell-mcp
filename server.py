@@ -20,7 +20,9 @@ def log(msg):
 
 # Boswell API configuration - pulled from environment, Railway sets this
 BOSWELL_API = os.environ.get('BOSWELL_API', 'http://localhost:8000/v2')
+INTERNAL_SECRET = os.environ.get('INTERNAL_SECRET', '')
 log(f"BOSWELL_API = {BOSWELL_API}")
+log(f"INTERNAL_SECRET set: {bool(INTERNAL_SECRET)}")
 
 # Initialize MCP server
 app = Server("boswell-mcp")
@@ -430,7 +432,12 @@ async def call_tool(name: str, arguments: dict):
     """Handle tool calls by proxying to Boswell API."""
     log(f"TOOL CALL START: {name} with args: {arguments}")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Build headers - include internal secret for stdio auth bypass
+    headers = {}
+    if INTERNAL_SECRET:
+        headers['X-Boswell-Internal'] = INTERNAL_SECRET
+
+    async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
         try:
             log(f"Making request to {BOSWELL_API} for tool: {name}")
             if name == "boswell_brief":
