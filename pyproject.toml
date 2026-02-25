@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boswell-mcp"
+version = "0.1.0"
+description = "Persistent memory for Claude instances — git-style versioned memory with semantic search"
+readme = "README_PYPI.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Steve Krontz", email = "steve@askboswell.com" },
+]
+keywords = ["mcp", "claude", "memory", "ai", "llm", "boswell"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "httpx>=0.25.0",
+    "mcp>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://askboswell.com"
+Repository = "https://github.com/stevekrontz-dev/boswell-mcp"
+Documentation = "https://askboswell.com/docs"
+
+[project.scripts]
+boswell = "boswell_mcp.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["boswell_mcp"]

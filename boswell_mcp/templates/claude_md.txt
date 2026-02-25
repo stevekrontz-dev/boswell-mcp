@@ -1,0 +1,38 @@
+# Boswell Memory System
+
+## Startup (MANDATORY)
+FIRST action on EVERY conversation, before responding to anything:
+1. Call `boswell_startup` with appropriate verbosity
+2. Then respond
+
+No exceptions.
+
+## Bookmark vs Commit
+**Default to `boswell_bookmark`.** Only use `boswell_commit` when you're certain something is permanently important.
+
+### Use `boswell_bookmark` for:
+- Observations, patterns, hunches
+- Session context ("what I'm working on right now")
+- Anything that MIGHT be worth remembering
+- Default salience: 0.3. Only raise for strong signals.
+
+### Use `boswell_commit` for:
+- Decisions and their reasoning (WHY, not just WHAT)
+- Architectural choices
+- Completed work milestones
+- Approved plans
+
+### Key differences:
+- Bookmarks expire (default 7 days). Commits are permanent.
+- Nightly consolidation promotes high-value bookmarks automatically.
+- If unsure, bookmark. The system will promote what matters.
+
+## Branches
+Your memory is organized into branches. Use the ones that fit your work:
+{branches}
+
+## Tips
+- Commits must capture WHY, not just WHAT
+- Use `boswell_search` for keyword lookup, `boswell_semantic_search` for conceptual queries
+- Call `boswell_brief` to see recent activity on any branch
+- Use `boswell_reflect` for AI-surfaced insights across branches
