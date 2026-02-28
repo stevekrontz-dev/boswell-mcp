@@ -131,7 +131,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "branch": {"type": "string", "description": "Branch to commit to"},
-                "content": {"type": "object", "description": "Memory content as JSON"},
+                "content": {"oneOf": [{"type": "object"}, {"type": "string"}], "description": "Memory content as JSON object or JSON string"},
                 "message": {"type": "string", "description": "Commit message"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags"}
             },
@@ -377,11 +377,21 @@ async def call_boswell_tool(name: str, arguments: dict) -> dict:
                     # Branch doesn't exist - create it first
                     await client.post(f"{BOSWELL_API}/branch", json={"name": branch})
                 
+                # Content must be a JSON object — parse if it arrives as a string
+                content = arguments["content"]
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                        if not isinstance(content, dict):
+                            return {"error": "Content must parse to a JSON object, not " + type(content).__name__}
+                    except (json.JSONDecodeError, TypeError):
+                        return {"error": "Content string is not valid JSON: " + content[:100]}
+
                 payload = {
                     "branch": branch,
-                    "content": arguments["content"],
+                    "content": content,
                     "message": arguments["message"],
-                    "author": "claude-web",
+                    "author": "claude",
                     "type": "memory"
                 }
                 if "tags" in arguments:
